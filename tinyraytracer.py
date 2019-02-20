@@ -15,7 +15,7 @@ class Sphere():
     def __init__(self, centre, radius, colour):
         self.centre = np.array(centre)
         self.radius = np.array(radius)
-        self.colour = colour
+        self.colour = np.array(colour)
 
     def ray_intersect(self, ray):
         # TODO: try out geometric solution too
@@ -31,6 +31,11 @@ class Sphere():
             return t
         else:
             return None
+
+class Light():
+    def __init__(self, position, intensity):
+        self.position = np.array(position)
+        self.intensity = intensity
 
 def normalise(vector):
     return vector / np.linalg.norm(vector)
@@ -54,7 +59,8 @@ def px2coords(px_coords, screen_size, z_dist, fov_deg):
 
     return (x_r, y_r)
 
-def cast_ray(ray, spheres):
+def cast_ray(ray, spheres, light):
+    # TODO tidy this up
     min_t = float('inf')
     nearest_sphere = None
 
@@ -65,11 +71,16 @@ def cast_ray(ray, spheres):
             nearest_sphere = sphere
 
     if nearest_sphere is not None:
-        return nearest_sphere.colour
+        intersection = ray.origin + min_t * ray.direction
+        normal = normalise(intersection - sphere.centre)
+        light_dir = normalise(light.position - intersection)
+        diffuse_light_intensity = light.intensity * max(0, np.dot(light_dir, normal))
+        diffuse_colour = nearest_sphere.colour * diffuse_light_intensity
+        return diffuse_colour
     else:
         return COLOURS['bg']
 
-def render(spheres):
+def render(spheres, light):
     width, height = 1024, 768
     camera_pos = [0,0,0]
 
@@ -82,7 +93,8 @@ def render(spheres):
             x_r, y_r = px2coords((x_px, y_px), (width, height), 1, 90)
             ray_dir = normalise([x_r, y_r, -1])
             ray = Ray(camera_pos, ray_dir)
-            frame[y_px,x_px,:] = cast_ray(ray, spheres)
+
+            frame[y_px,x_px,:] = cast_ray(ray, spheres, light)
 
     print('')
 
@@ -94,7 +106,9 @@ def main():
                 Sphere([ 1.5, -0.5, -18.0], 3, COLOURS['red rubber']),
                 Sphere([ 7.0,  5.0, -18.0], 4, COLOURS['ivory'])]
 
-    frame = render(spheres)
+    light = Light([-20, 20,  20], 1.5)
+
+    frame = render(spheres, light)
     
     imwrite('./test.png', frame)
     imshow(frame)
