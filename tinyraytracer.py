@@ -3,8 +3,15 @@
 import sys
 
 import numpy as np
-from scipy.misc import imshow
 from imageio import imwrite
+from matplotlib.pyplot import imshow
+
+class Material():
+    def __init__(self, colour, diffuse_albedo, specular_albedo, specular_exp):
+        self.colour = np.array(colour)
+        self.diffuse_albedo = diffuse_albedo
+        self.specular_albedo = specular_albedo
+        self.specular_exp = specular_exp
 
 class Ray():
     def __init__(self, origin, direction):
@@ -12,10 +19,10 @@ class Ray():
         self.direction = normalise(np.array(direction))
 
 class Sphere():
-    def __init__(self, centre, radius, colour):
+    def __init__(self, centre, radius, material):
         self.centre = np.array(centre)
         self.radius = np.array(radius)
-        self.colour = np.array(colour)
+        self.material = material
 
     def ray_intersect(self, ray):
         # TODO: try out geometric solution too
@@ -31,6 +38,9 @@ class Sphere():
             return t
         else:
             return None
+
+    def normal(self, point):
+        return normalise(point - self.centre)
 
 class Light():
     def __init__(self, position, intensity):
@@ -59,7 +69,28 @@ def px2coords(px_coords, screen_size, z_dist, fov_deg):
 
     return (x_r, y_r)
 
-def cast_ray(ray, spheres, light):
+def do_lighting(ray, lights, point, sphere):
+    normal = sphere.normal(point)
+    material = sphere.material
+
+    diffuse_light_intensity, specular_light_intensity = 0, 0
+    for light in lights:
+        light_dir = normalise(light.position - point)
+
+        # diffuse 
+        diffuse_light_intensity += light.intensity * max(0, np.dot(light_dir, normal)) 
+
+        # specular
+        reflection_dir = normalise(2*np.dot(light_dir, normal)*normal - light_dir)
+        specular_light_intensity += light.intensity * max(0, np.dot(reflection_dir, -1*ray.direction)) ** material.specular_exp
+
+    diffuse_colour = material.diffuse_albedo * diffuse_light_intensity * material.colour
+    specular_colour = material.specular_albedo * specular_light_intensity * WHITE_COLOUR
+    colour = diffuse_colour + specular_colour
+
+    return colour
+
+def cast_ray(ray, spheres, lights):
     # TODO tidy this up
     min_t = float('inf')
     nearest_sphere = None
@@ -72,15 +103,13 @@ def cast_ray(ray, spheres, light):
 
     if nearest_sphere is not None:
         intersection = ray.origin + min_t * ray.direction
-        normal = normalise(intersection - sphere.centre)
-        light_dir = normalise(light.position - intersection)
-        diffuse_light_intensity = light.intensity * max(0, np.dot(light_dir, normal))
-        diffuse_colour = nearest_sphere.colour * diffuse_light_intensity
-        return diffuse_colour
+        colour = do_lighting(ray, lights, intersection, nearest_sphere)
+        return colour
+        
     else:
-        return COLOURS['bg']
+        return BG_COLOUR
 
-def render(spheres, light):
+def render(spheres, lights):
     width, height = 1024, 768
     camera_pos = [0,0,0]
 
@@ -94,28 +123,34 @@ def render(spheres, light):
             ray_dir = normalise([x_r, y_r, -1])
             ray = Ray(camera_pos, ray_dir)
 
-            frame[y_px,x_px,:] = cast_ray(ray, spheres, light)
+            frame[y_px,x_px,:] = cast_ray(ray, spheres, lights)
 
     print('')
 
     return frame
 
 def main():
-    spheres = [Sphere([-3.0,  0.0, -16.0], 2, COLOURS['ivory']),
-                Sphere([-1.0, -1.5, -12.0], 2, COLOURS['red rubber']),
-                Sphere([ 1.5, -0.5, -18.0], 3, COLOURS['red rubber']),
-                Sphere([ 7.0,  5.0, -18.0], 4, COLOURS['ivory'])]
+    spheres = [Sphere([-3.0,  0.0, -16.0], 2, MATERIALS['ivory']),
+                Sphere([-1.0, -1.5, -12.0], 2, MATERIALS['red_rubber']),
+                Sphere([ 1.5, -0.5, -18.0], 3, MATERIALS['red_rubber']),
+                Sphere([ 7.0,  5.0, -18.0], 4, MATERIALS['ivory'])]
 
-    light = Light([-20, 20,  20], 1.5)
+    lights = [Light([-20, 20,  20], 1.5),
+                Light([30, 50, -25], 1.8),
+                Light([30, 20,  30], 1.7)]
 
-    frame = render(spheres, light)
+    frame = render(spheres, lights)
     
     imwrite('./test.png', frame)
     imshow(frame)
 
-COLOURS = {'bg':            (0.2, 0.7, 0.8),
-            'ivory':        (0.4, 0.4, 0.3),
-            'red rubber':   (0.3, 0.1, 0.1)}
+BG_COLOUR = np.array([0.2, 0.7, 0.8])
+WHITE_COLOUR = np.array([1.0, 1.0, 1.0])
+
+MATERIALS = {
+            'ivory':        Material(colour=(0.4, 0.4, 0.3), diffuse_albedo=0.6, specular_albedo=0.3, specular_exp=50),
+            'red_rubber':   Material(colour=(0.3, 0.1, 0.1), diffuse_albedo=0.9, specular_albedo=0.1, specular_exp=10)
+            }
 
 if __name__ == '__main__':
     main()
