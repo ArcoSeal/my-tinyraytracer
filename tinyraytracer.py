@@ -48,37 +48,57 @@ class Light():
         self.position = np.array(position)
         self.intensity = intensity
 
+class Scene():
+    def __init__(self, objects, lights):
+        self.objects = objects
+        self.lights = lights
+
 def normalise(vector):
     return vector / np.linalg.norm(vector)
 
-def reflect(light_dir, normal):
-    # light_dir is FROM reflection point TO light source
-    return normalise(2*np.dot(light_dir, normal)*normal - light_dir)
+def reflect(incident_dir, normal):
+    # incident_dir is FROM source TO reflection point
+    # reflection dir is FROM reflection point
+    return normalise(incident_dir - 2*np.dot(incident_dir, normal)*normal)
 
-def do_lighting(ray, lights, point, sphere):
-    normal = sphere.normal(point)
-    material = sphere.material
+def do_lighting(ray, point, lit_object, scene, current_recursion_depth=0):
+    normal = lit_object.normal(point)
+    material = lit_object.material
+    point_nudge = point + SHADOW_BIAS * normal # nudge hit point in direction of normal to avoid intersection with hit sphere
 
     diffuse_light_intensity, specular_light_intensity = 0, 0
-    for light in lights:
-        light_dir = normalise(light.position - point)
+    for light in scene.lights:
+        # if not is_shadowed(point_nudge, light, scene.objects):
+        if True:
+            light_dir = normalise(light.position - point)
 
-        # diffuse 
-        diffuse_light_intensity += light.intensity * max(0, np.dot(light_dir, normal)) 
+            # diffuse 
+            diffuse_light_intensity += light.intensity * max(0, np.dot(light_dir, normal)) 
 
-        # specular
-        reflection_dir = reflect(light_dir, normal)
-        specular_light_intensity += light.intensity * max(0, np.dot(reflection_dir, -1*ray.direction)) ** material.specular_exp
+            # specular
+            light_reflection_dir = reflect(-1*light_dir, normal)
+            specular_light_intensity += light.intensity * max(0, np.dot(light_reflection_dir, -1*ray.direction)) ** material.specular_exp
 
     diffuse_colour = material.diffuse_albedo * diffuse_light_intensity * material.colour
     specular_colour = material.specular_albedo * specular_light_intensity * WHITE_COLOUR
-    colour = diffuse_colour + specular_colour
+
+    # reflective
+    if current_recursion_depth < MAX_RECURSION_DEPTH:
+        reflect_ray = Ray(point_nudge, reflect(ray.direction, normal))
+        reflect_colour = material.reflective_albedo * cast_ray(reflect_ray, scene, current_recursion_depth+1)
+    else:
+        reflect_colour = 0
+
+    colour = diffuse_colour + specular_colour + reflect_colour
+    # if current_recursion_depth == 0 and material.reflective_albedo > 0.5 and np.linalg.norm(colour) < 0.001:
+    #     import pdb
+    #     pdb.set_trace()
 
     return colour
 
-def is_shadowed(point, light, spheres):
+def is_shadowed(point, light, objects):
     light_ray = Ray(point, light.position-point)
-    hit_sphere, hit_point = scene_intersection(light_ray, spheres)
+    hit_sphere, hit_point = scene_intersection(light_ray, objects)
 
     if hit_sphere is not None:
         light_dist = np.linalg.norm(light.position-point)
@@ -88,11 +108,11 @@ def is_shadowed(point, light, spheres):
     
     return False
 
-def scene_intersection(ray, spheres):
+def scene_intersection(ray, objects):
     min_t = float('inf')
     nearest_sphere = None
 
-    for sphere in spheres:
+    for sphere in objects:
         t = sphere.ray_intersect(ray)
         if t is not None and t < min_t:
             min_t = t
@@ -104,15 +124,13 @@ def scene_intersection(ray, spheres):
     else:
         return None, None
 
-def cast_ray(ray, spheres, lights):
-    hit_sphere, hit_point = scene_intersection(ray, spheres)
+def cast_ray(ray, scene, current_recursion_depth=0):
+    hit_sphere, hit_point = scene_intersection(ray, scene.objects)
 
     if hit_sphere is not None:
-        hit_point_nudge = hit_point + 1e-3 * hit_sphere.normal(hit_point) # nudge hit point in direction of normal to avoid intersection with hit sphere
-        visible_lights = [light for light in lights if not is_shadowed(hit_point_nudge, light, spheres)]
-        colour = do_lighting(ray, visible_lights, hit_point, hit_sphere)
-
+        colour = do_lighting(ray, hit_point, hit_sphere, scene, current_recursion_depth)
         return colour
+
     else:
         return BG_COLOUR
 
@@ -135,7 +153,7 @@ def px2coords(px_coords, screen_size, z_dist, fov_deg):
 
     return (x_r, y_r)
 
-def render(spheres, lights):
+def render(scene):
     width, height = 1024, 768
     camera_pos = [0,0,0]
 
@@ -159,17 +177,8 @@ def render(spheres, lights):
 
     return frame
 
-def main():
-    spheres = [Sphere([-3.0,  0.0, -16.0], 2, MATERIALS['ivory']),
-                Sphere([-1.0, -1.5, -12.0], 2, MATERIALS['red_rubber']),
-                Sphere([ 1.5, -0.5, -18.0], 3, MATERIALS['red_rubber']),
-                Sphere([ 7.0,  5.0, -18.0], 4, MATERIALS['ivory'])]
-
-    lights = [Light([-20, 20,  20], 1.5),
-                Light([30, 50, -25], 1.8),
-                Light([30, 20,  30], 1.7)]
-
-    frame = render(spheres, lights)
+def main(scene):
+    frame = render(scene)
     
     imwrite('./test.png', frame)
     imshow(frame)
@@ -178,9 +187,26 @@ BG_COLOUR = np.array([0.2, 0.7, 0.8])
 WHITE_COLOUR = np.array([1.0, 1.0, 1.0])
 
 MATERIALS = {
-            'ivory':        Material(colour=(0.4, 0.4, 0.3), albedos=(0.6, 0.3, 0.0), specular_exp=50),
-            'red_rubber':   Material(colour=(0.3, 0.1, 0.1), albedos=(0.9, 0.1, 0.0), specular_exp=10)
+            'ivory':        Material(colour=(0.4, 0.4, 0.3), albedos=(0.6, 0.3, 0.1), specular_exp=50),
+            'red_rubber':   Material(colour=(0.3, 0.1, 0.1), albedos=(0.9, 0.1, 0.0), specular_exp=10),
+            'mirror':       Material(colour=(1.0, 10.0, 1.0), albedos=(0.0, 1.0, 0.8), specular_exp=1425)
             }
 
+SHADOW_BIAS = 1e-6
+MAX_RECURSION_DEPTH = 4
+
 if __name__ == '__main__':
-    main()
+    spheres = [
+                Sphere([-3.0,  0.0, -16.0], 2, MATERIALS['ivory']),
+                Sphere([-1.0, -1.5, -12.0], 2, MATERIALS['mirror']),
+                Sphere([ 1.5, -0.5, -18.0], 3, MATERIALS['red_rubber']),
+                Sphere([ 7.0,  5.0, -18.0], 4, MATERIALS['mirror'])
+                ]
+
+    lights = [Light([-20, 20,  20], 1.5),
+                Light([30, 50, -25], 1.8),
+                Light([30, 20,  30], 1.7)]
+
+    scene = Scene(spheres, lights)
+    
+    main(scene)
