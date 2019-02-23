@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
-
 import numpy as np
 from imageio import imwrite
 from matplotlib.pyplot import imshow
@@ -151,7 +149,11 @@ def render(spheres, lights):
             ray_dir = normalise([x_r, y_r, -1])
             ray = Ray(camera_pos, ray_dir)
 
-            frame[y_px,x_px,:] = cast_ray(ray, spheres, lights)
+            px_colour = cast_ray(ray, scene)
+            if px_colour.max() > 1: px_colour = px_colour / px_colour.max()
+            px_colour = np.clip(px_colour, a_min=0, a_max=None)
+
+            frame[y_px,x_px,:] = px_colour
 
     print('')
 
