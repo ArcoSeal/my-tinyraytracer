@@ -7,10 +7,11 @@ from imageio import imwrite
 from matplotlib.pyplot import imshow
 
 class Material():
-    def __init__(self, colour, diffuse_albedo, specular_albedo, specular_exp):
+    def __init__(self, colour, albedos, specular_exp):
         self.colour = np.array(colour)
-        self.diffuse_albedo = diffuse_albedo
-        self.specular_albedo = specular_albedo
+        self.diffuse_albedo = albedos[0]
+        self.specular_albedo = albedos[1]
+        self.reflective_albedo = albedos[2]
         self.specular_exp = specular_exp
 
 class Ray():
@@ -34,10 +35,12 @@ class Sphere():
         discriminant = b**2 - 4*a*c
 
         if discriminant >= 0:
-            t = (-1*b - discriminant**0.5) / (2*a) # magnitude of vector from ray origin to intersection (smaller solution of quadratic is always closest to origin)
-            return t
-        else:
-            return None
+            t = [(-1*b + discriminant**0.5) / (2*a), (-1*b - discriminant**0.5) / (2*a)]
+            t = [ii for ii in t if ii>=0] # keep only +ve roots (in front of ray origin)
+            if t:
+                return np.min(t) # smaller +ve root is closer to origin
+
+        return None
 
     def normal(self, point):
         return normalise(point - self.centre)
@@ -49,6 +52,71 @@ class Light():
 
 def normalise(vector):
     return vector / np.linalg.norm(vector)
+
+def reflect(light_dir, normal):
+    # light_dir is FROM reflection point TO light source
+    return normalise(2*np.dot(light_dir, normal)*normal - light_dir)
+
+def do_lighting(ray, lights, point, sphere):
+    normal = sphere.normal(point)
+    material = sphere.material
+
+    diffuse_light_intensity, specular_light_intensity = 0, 0
+    for light in lights:
+        light_dir = normalise(light.position - point)
+
+        # diffuse 
+        diffuse_light_intensity += light.intensity * max(0, np.dot(light_dir, normal)) 
+
+        # specular
+        reflection_dir = reflect(light_dir, normal)
+        specular_light_intensity += light.intensity * max(0, np.dot(reflection_dir, -1*ray.direction)) ** material.specular_exp
+
+    diffuse_colour = material.diffuse_albedo * diffuse_light_intensity * material.colour
+    specular_colour = material.specular_albedo * specular_light_intensity * WHITE_COLOUR
+    colour = diffuse_colour + specular_colour
+
+    return colour
+
+def is_shadowed(point, light, spheres):
+    light_ray = Ray(point, light.position-point)
+    hit_sphere, hit_point = scene_intersection(light_ray, spheres)
+
+    if hit_sphere is not None:
+        light_dist = np.linalg.norm(light.position-point)
+        shadow_dist = np.linalg.norm(hit_point-point)
+        if shadow_dist < light_dist: # if shadow_dist > light_dist, object is behind light source and hence does not cast shadow
+            return True
+    
+    return False
+
+def scene_intersection(ray, spheres):
+    min_t = float('inf')
+    nearest_sphere = None
+
+    for sphere in spheres:
+        t = sphere.ray_intersect(ray)
+        if t is not None and t < min_t:
+            min_t = t
+            nearest_sphere = sphere
+
+    if nearest_sphere is not None:
+        intersection = ray.origin + min_t * ray.direction
+        return nearest_sphere, intersection   
+    else:
+        return None, None
+
+def cast_ray(ray, spheres, lights):
+    hit_sphere, hit_point = scene_intersection(ray, spheres)
+
+    if hit_sphere is not None:
+        hit_point_nudge = hit_point + 1e-3 * hit_sphere.normal(hit_point) # nudge hit point in direction of normal to avoid intersection with hit sphere
+        visible_lights = [light for light in lights if not is_shadowed(hit_point_nudge, light, spheres)]
+        colour = do_lighting(ray, visible_lights, hit_point, hit_sphere)
+
+        return colour
+    else:
+        return BG_COLOUR
 
 def px2coords(px_coords, screen_size, z_dist, fov_deg):
     # TODO: optimise
@@ -68,46 +136,6 @@ def px2coords(px_coords, screen_size, z_dist, fov_deg):
     y_r *= -1 # correct direction (increasing y px coords -> downwards)
 
     return (x_r, y_r)
-
-def do_lighting(ray, lights, point, sphere):
-    normal = sphere.normal(point)
-    material = sphere.material
-
-    diffuse_light_intensity, specular_light_intensity = 0, 0
-    for light in lights:
-        light_dir = normalise(light.position - point)
-
-        # diffuse 
-        diffuse_light_intensity += light.intensity * max(0, np.dot(light_dir, normal)) 
-
-        # specular
-        reflection_dir = normalise(2*np.dot(light_dir, normal)*normal - light_dir)
-        specular_light_intensity += light.intensity * max(0, np.dot(reflection_dir, -1*ray.direction)) ** material.specular_exp
-
-    diffuse_colour = material.diffuse_albedo * diffuse_light_intensity * material.colour
-    specular_colour = material.specular_albedo * specular_light_intensity * WHITE_COLOUR
-    colour = diffuse_colour + specular_colour
-
-    return colour
-
-def cast_ray(ray, spheres, lights):
-    # TODO tidy this up
-    min_t = float('inf')
-    nearest_sphere = None
-
-    for sphere in spheres:
-        t = sphere.ray_intersect(ray)
-        if t is not None and t < min_t:
-            min_t = t
-            nearest_sphere = sphere
-
-    if nearest_sphere is not None:
-        intersection = ray.origin + min_t * ray.direction
-        colour = do_lighting(ray, lights, intersection, nearest_sphere)
-        return colour
-        
-    else:
-        return BG_COLOUR
 
 def render(spheres, lights):
     width, height = 1024, 768
@@ -148,8 +176,8 @@ BG_COLOUR = np.array([0.2, 0.7, 0.8])
 WHITE_COLOUR = np.array([1.0, 1.0, 1.0])
 
 MATERIALS = {
-            'ivory':        Material(colour=(0.4, 0.4, 0.3), diffuse_albedo=0.6, specular_albedo=0.3, specular_exp=50),
-            'red_rubber':   Material(colour=(0.3, 0.1, 0.1), diffuse_albedo=0.9, specular_albedo=0.1, specular_exp=10)
+            'ivory':        Material(colour=(0.4, 0.4, 0.3), albedos=(0.6, 0.3, 0.0), specular_exp=50),
+            'red_rubber':   Material(colour=(0.3, 0.1, 0.1), albedos=(0.9, 0.1, 0.0), specular_exp=10)
             }
 
 if __name__ == '__main__':
