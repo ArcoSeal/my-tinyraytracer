@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 
+import sys
+import multiprocessing
+import functools
+
 import numpy as np
 from imageio import imwrite
 from matplotlib.pyplot import imshow
@@ -153,32 +157,48 @@ def px2coords(px_coords, screen_size, z_dist, fov_deg):
 
     return (x_r, y_r)
 
-def render(scene):
-    width, height = 1024, 768
-    camera_pos = [0,0,0]
+def render_px(px, width, height, camera_pos):
+    x_r, y_r = px2coords(px, (width, height), 1, 90)
+    ray_dir = normalise([x_r, y_r, -1])
+    ray = Ray(camera_pos, ray_dir)
 
+    px_colour = cast_ray(ray, scene)
+    if px_colour.max() > 1: px_colour = px_colour / px_colour.max()
+    px_colour = np.clip(px_colour, a_min=0, a_max=None)
+
+    return px, px_colour
+
+def render(scene, width, height, camera_pos, processes):
     frame = np.zeros((height, width, 3)) # [y,x,rgb]
 
-    for y_px in range(0, height):
-        for x_px in range(0, width):
-            print('Rendering pixel ({},{})...\r'.format(x_px, y_px), end='')
+    xi, yi = np.meshgrid(range(0, width), range(0, height))
+    px_list = zip(xi.reshape(-1), yi.reshape(-1))
 
-            x_r, y_r = px2coords((x_px, y_px), (width, height), 1, 90)
-            ray_dir = normalise([x_r, y_r, -1])
-            ray = Ray(camera_pos, ray_dir)
+    
+    if processes > 1:
+        render_px_wrapper = functools.partial(render_px, width=width, height=height, camera_pos=camera_pos)
+        pool = multiprocessing.Pool(processes)
 
-            px_colour = cast_ray(ray, scene)
-            if px_colour.max() > 1: px_colour = px_colour / px_colour.max()
-            px_colour = np.clip(px_colour, a_min=0, a_max=None)
-
-            frame[y_px,x_px,:] = px_colour
-
-    print('')
+        results = pool.map(render_px_wrapper, px_list, chunksize=(height*width)//processes)
+    
+        pool.close()
+        pool.join()
+    
+    else:
+        results = [render_px(px, width, height, camera_pos) for px in px_list]
+    
+    for ii in results:
+        x_px, y_px = ii[0]
+        px_colour = ii[1]
+        frame[y_px,x_px,:] = px_colour
 
     return frame
 
-def main(scene):
-    frame = render(scene)
+def main(scene, processes):
+    width, height = 1024, 768
+    camera_pos = [0,0,0]
+
+    frame = render(scene, width, height, camera_pos, processes)
     
     imwrite('./test.png', frame)
     imshow(frame)
@@ -196,8 +216,9 @@ SHADOW_BIAS = 1e-6
 MAX_RECURSION_DEPTH = 4
 
 if __name__ == '__main__':
-    spheres = [
-                Sphere([-3.0,  0.0, -16.0], 2, MATERIALS['ivory']),
+    processes = int(sys.argv[1])
+
+    spheres = [Sphere([-3.0,  0.0, -16.0], 2, MATERIALS['ivory']),
                 Sphere([-1.0, -1.5, -12.0], 2, MATERIALS['mirror']),
                 Sphere([ 1.5, -0.5, -18.0], 3, MATERIALS['red_rubber']),
                 Sphere([ 7.0,  5.0, -18.0], 4, MATERIALS['mirror'])
@@ -209,4 +230,4 @@ if __name__ == '__main__':
 
     scene = Scene(spheres, lights)
     
-    main(scene)
+    main(scene, processes)
