@@ -72,8 +72,7 @@ def do_lighting(ray, point, lit_object, scene, current_recursion_depth=0):
 
     diffuse_light_intensity, specular_light_intensity = 0, 0
     for light in scene.lights:
-        # if not is_shadowed(point_nudge, light, scene.objects):
-        if True:
+        if not is_shadowed(point_nudge, light, scene.objects):
             light_dir = normalise(light.position - point)
 
             # diffuse 
@@ -94,9 +93,6 @@ def do_lighting(ray, point, lit_object, scene, current_recursion_depth=0):
         reflect_colour = 0
 
     colour = diffuse_colour + specular_colour + reflect_colour
-    # if current_recursion_depth == 0 and material.reflective_albedo > 0.5 and np.linalg.norm(colour) < 0.001:
-    #     import pdb
-    #     pdb.set_trace()
 
     return colour
 
