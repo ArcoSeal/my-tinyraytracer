@@ -9,12 +9,14 @@ from imageio import imwrite
 from matplotlib.pyplot import imshow
 
 class Material():
-    def __init__(self, colour, albedos, specular_exp):
+    def __init__(self, colour, albedos, specular_exp, refractive_index):
         self.colour = np.array(colour)
         self.diffuse_albedo = albedos[0]
         self.specular_albedo = albedos[1]
         self.reflective_albedo = albedos[2]
+        self.transparent_albedo = albedos[3]
         self.specular_exp = specular_exp
+        self.refractive_index = refractive_index
 
 class Ray():
     def __init__(self, origin, direction):
@@ -62,17 +64,39 @@ def normalise(vector):
 
 def reflect(incident_dir, normal):
     # incident_dir is FROM source TO reflection point
+    # incident_dir & normal should be normalised
     # reflection dir is FROM reflection point
     return normalise(incident_dir - 2*np.dot(incident_dir, normal)*normal)
 
-def do_lighting(ray, point, lit_object, scene, current_recursion_depth=0):
+def refract(incident_dir, normal, n1, n2):
+    # incident_dir is FROM source TO reflection point
+    # incident_dir & normal should be normalised
+    # n1 -> material 1, where the incident ray is FROM
+
+    n_ratio = n1/n2
+    cos_theta1 = np.dot(-1*incident_dir, normal)
+
+    if cos_theta1 < 0: # if cos_theta < 0, incident ray is inside material 2 -> reflect everything accordingly
+        cos_theta1 *= -1
+        normal *= -1
+        n_ratio = 1 / n_ratio
+
+    sin_theta1 = (1 - cos_theta1**2)**0.5
+    sin_theta2 = n_ratio * sin_theta1
+    cos_theta2 = (1 - sin_theta2**2)**0.5
+
+    refract_dir = normalise(n_ratio * incident_dir + (n_ratio*cos_theta1 - cos_theta2) * normal)
+
+    return refract_dir
+
+def do_lighting(ray, point, lit_object, scene, current_recursion_depth):
     normal = lit_object.normal(point)
     material = lit_object.material
-    point_nudge = point + SHADOW_BIAS * normal # nudge hit point in direction of normal to avoid intersection with hit sphere
 
     diffuse_light_intensity, specular_light_intensity = 0, 0
     for light in scene.lights:
-        if not is_shadowed(point_nudge, light, scene.objects):
+        shadow_point = point + SHADOW_BIAS * normal
+        if not is_shadowed(shadow_point, light, scene.objects):
             light_dir = normalise(light.position - point)
 
             # diffuse 
@@ -85,14 +109,31 @@ def do_lighting(ray, point, lit_object, scene, current_recursion_depth=0):
     diffuse_colour = material.diffuse_albedo * diffuse_light_intensity * material.colour
     specular_colour = material.specular_albedo * specular_light_intensity * WHITE_COLOUR
 
-    # reflective
+    # reflection
     if current_recursion_depth < MAX_RECURSION_DEPTH:
-        reflect_ray = Ray(point_nudge, reflect(ray.direction, normal))
+        reflect_dir = reflect(ray.direction, normal)
+        if np.dot(normal, reflect_dir) >= 0:
+            reflect_orig = point + SHADOW_BIAS * normal
+        else:
+            reflect_orig = point - SHADOW_BIAS * normal
+        reflect_ray = Ray(reflect_orig, reflect_dir)
         reflect_colour = material.reflective_albedo * cast_ray(reflect_ray, scene, current_recursion_depth+1)
     else:
         reflect_colour = 0
 
-    colour = diffuse_colour + specular_colour + reflect_colour
+    # refraction
+    if material.transparent_albedo > 0 and current_recursion_depth < MAX_RECURSION_DEPTH:
+        refract_dir = refract(ray.direction, normal, n1=1.0, n2=material.refractive_index)
+        if np.dot(normal, refract_dir) >= 0:
+            refract_orig = point + SHADOW_BIAS * normal
+        else:
+            refract_orig = point - SHADOW_BIAS * normal
+        refract_ray = Ray(refract_orig, refract_dir)
+        refract_colour = material.transparent_albedo * cast_ray(refract_ray, scene, current_recursion_depth+1)
+    else:
+        refract_colour = 0
+
+    colour = diffuse_colour + specular_colour + reflect_colour + refract_colour
 
     return colour
 
@@ -170,7 +211,6 @@ def render(scene, width, height, camera_pos, processes):
     xi, yi = np.meshgrid(range(0, width), range(0, height))
     px_list = zip(xi.reshape(-1), yi.reshape(-1))
 
-    
     if processes > 1:
         render_px_wrapper = functools.partial(render_px, width=width, height=height, camera_pos=camera_pos)
         pool = multiprocessing.Pool(processes)
@@ -203,9 +243,10 @@ BG_COLOUR = np.array([0.2, 0.7, 0.8])
 WHITE_COLOUR = np.array([1.0, 1.0, 1.0])
 
 MATERIALS = {
-            'ivory':        Material(colour=(0.4, 0.4, 0.3), albedos=(0.6, 0.3, 0.1), specular_exp=50),
-            'red_rubber':   Material(colour=(0.3, 0.1, 0.1), albedos=(0.9, 0.1, 0.0), specular_exp=10),
-            'mirror':       Material(colour=(1.0, 10.0, 1.0), albedos=(0.0, 1.0, 0.8), specular_exp=1425)
+            'ivory':        Material(colour=(0.4, 0.4, 0.3), albedos=(0.6, 0.3, 0.1, 0.0), specular_exp=50, refractive_index=1.0),
+            'red_rubber':   Material(colour=(0.3, 0.1, 0.1), albedos=(0.9, 0.1, 0.0, 0.0), specular_exp=10, refractive_index=1.0),
+            'mirror':       Material(colour=(1.0, 10.0, 1.0), albedos=(0.0, 1.0, 0.8, 0.0), specular_exp=1425, refractive_index=1.0),
+            'glass':        Material(colour=(0.6, 0.7, 0.8), albedos=(0.0,  0.5, 0.1, 0.8), specular_exp=125, refractive_index=1.5)
             }
 
 SHADOW_BIAS = 1e-6
@@ -215,7 +256,7 @@ if __name__ == '__main__':
     processes = int(sys.argv[1])
 
     spheres = [Sphere([-3.0,  0.0, -16.0], 2, MATERIALS['ivory']),
-                Sphere([-1.0, -1.5, -12.0], 2, MATERIALS['mirror']),
+                Sphere([-1.0, -1.5, -12.0], 2, MATERIALS['glass']),
                 Sphere([ 1.5, -0.5, -18.0], 3, MATERIALS['red_rubber']),
                 Sphere([ 7.0,  5.0, -18.0], 4, MATERIALS['mirror'])
                 ]
