@@ -110,7 +110,7 @@ def do_lighting(ray, point, lit_object, scene, current_recursion_depth):
     specular_colour = material.specular_albedo * specular_light_intensity * WHITE_COLOUR
 
     # reflection
-    if current_recursion_depth < MAX_RECURSION_DEPTH:
+    if material.reflective_albedo > 0 and current_recursion_depth < MAX_RECURSION_DEPTH:
         reflect_dir = reflect(ray.direction, normal)
         if np.dot(normal, reflect_dir) >= 0:
             reflect_orig = point + SHADOW_BIAS * normal
@@ -253,7 +253,10 @@ SHADOW_BIAS = 1e-6
 MAX_RECURSION_DEPTH = 4
 
 if __name__ == '__main__':
-    processes = int(sys.argv[1])
+    try:
+        processes = int(sys.argv[1])
+    except:
+        processes = 1
 
     spheres = [Sphere([-3.0,  0.0, -16.0], 2, MATERIALS['ivory']),
                 Sphere([-1.0, -1.5, -12.0], 2, MATERIALS['glass']),
