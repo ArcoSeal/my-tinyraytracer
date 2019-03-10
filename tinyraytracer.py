@@ -4,6 +4,8 @@ import sys
 import multiprocessing
 import functools
 
+from tqdm import tqdm
+
 import numpy as np
 from imageio import imwrite
 from matplotlib.pyplot import imshow
@@ -209,7 +211,7 @@ def render(scene, width, height, camera_pos, processes):
     frame = np.zeros((height, width, 3)) # [y,x,rgb]
 
     xi, yi = np.meshgrid(range(0, width), range(0, height))
-    px_list = zip(xi.reshape(-1), yi.reshape(-1))
+    px_list = list(zip(xi.reshape(-1), yi.reshape(-1)))
 
     if processes > 1:
         render_px_wrapper = functools.partial(render_px, width=width, height=height, camera_pos=camera_pos)
@@ -221,7 +223,7 @@ def render(scene, width, height, camera_pos, processes):
         pool.join()
     
     else:
-        results = [render_px(px, width, height, camera_pos) for px in px_list]
+        results = [render_px(px, width, height, camera_pos) for px in tqdm(px_list, desc='Rendering')]
     
     for ii in results:
         x_px, y_px = ii[0]
